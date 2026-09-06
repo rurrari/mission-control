@@ -162,6 +162,7 @@ export const LOCAL_DEFAULT_LAYOUT = [
   'task-pipeline',
   'system-health',
   'quick-actions',
+  'anki-recent',
 ]
 
 export const GATEWAY_DEFAULT_LAYOUT = [
