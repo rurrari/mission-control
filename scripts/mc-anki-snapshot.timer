@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodic refresh of the Anki snapshot for the MC dashboard widget
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+Unit=mc-anki-snapshot.service
+
+[Install]
+WantedBy=timers.target

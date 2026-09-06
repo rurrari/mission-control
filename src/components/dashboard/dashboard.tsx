@@ -44,12 +44,15 @@ export function Dashboard() {
   const [dbStats, setDbStats] = useState<DbStats | null>(null)
   const [claudeStats, setClaudeStats] = useState<ClaudeStats | null>(null)
   const [githubStats, setGithubStats] = useState<any>(null)
+  const [ankiCards, setAnkiCards] = useState<any[] | null>(null)
+  const [ankiError, setAnkiError] = useState<string | null>(null)
   const [hermesCronJobCount, setHermesCronJobCount] = useState(0)
   const [loading, setLoading] = useState({
     system: true,
     sessions: true,
     claude: true,
     github: true,
+    anki: true,
   })
 
   const loadDashboard = useCallback(async () => {
@@ -102,8 +105,18 @@ export function Dashboard() {
           })
           .catch(() => {})
       )
+
+      requests.push(
+        apiFetch<any>('/api/anki')
+          .then((data) => {
+            if (data?.cards) setAnkiCards(data.cards)
+            if (data?.error) setAnkiError(data.error)
+          })
+          .catch(() => {})
+          .finally(() => setLoading(prev => ({ ...prev, anki: false })))
+      )
     } else {
-      setLoading(prev => ({ ...prev, claude: false, github: false }))
+      setLoading(prev => ({ ...prev, claude: false, github: false, anki: false }))
     }
 
     await Promise.allSettled(requests)
@@ -116,6 +129,7 @@ export function Dashboard() {
   const isSessionsLoading = loading.sessions && sessions.length === 0
   const isClaudeLoading = isLocal && loading.claude && !claudeStats
   const isGithubLoading = isLocal && loading.github && !githubStats
+  const isAnkiLoading = loading.anki && !ankiCards
 
   const memPct = systemStats?.memory?.total
     ? Math.round((systemStats.memory.used / systemStats.memory.total) * 100)
@@ -208,6 +222,8 @@ export function Dashboard() {
     dbStats,
     claudeStats,
     githubStats,
+    ankiCards,
+    ankiError,
     loading,
     sessions,
     logs,
@@ -247,6 +263,7 @@ export function Dashboard() {
     isSessionsLoading,
     isClaudeLoading,
     isGithubLoading,
+    isAnkiLoading,
     hermesCronJobCount,
     subscriptionLabel,
     subscriptionPrice,

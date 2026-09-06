@@ -34,6 +34,12 @@ services:
       # Optional: mount your OpenClaw state directory read-only so Mission Control
       # can read agent configs and memory. Uncomment and adjust the host path:
       # - ${OPENCLAW_HOME:-~/.openclaw}:/run/openclaw:ro
+      # Read-only mount of a periodically-refreshed, world-readable snapshot of the
+      # host's Anki collection (see scripts/anki-snapshot.sh), for the "Anki recent
+      # words" widget. NOT the live collection dir directly: Anki chmods its own
+      # collection.anki2 back to 0600 on every save, which the container's uid
+      # (1001) can't read regardless of this mount.
+      - ${ANKI_SNAPSHOT_DIR:-/home/russ/.local/state/mc-anki-snapshot}:/anki-data:ro
     # Allow the container to reach an OpenClaw gateway running on the Docker host.
     # Docker Desktop (macOS/Windows): host.docker.internal works out of the box.
     # Linux: this extra_hosts entry maps host.docker.internal to the host IP.

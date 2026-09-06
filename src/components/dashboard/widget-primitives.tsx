@@ -31,13 +31,22 @@ export type LogLike = {
   message: string
 }
 
+export interface AnkiRecentCard {
+  id: number
+  addedAt: number
+  front: string
+  back: string
+}
+
 export interface DashboardData {
   isLocal: boolean
   systemStats: any
   dbStats: DbStats | null
   claudeStats: ClaudeStats | null
   githubStats: any
-  loading: { system: boolean; sessions: boolean; claude: boolean; github: boolean }
+  ankiCards: AnkiRecentCard[] | null
+  ankiError: string | null
+  loading: { system: boolean; sessions: boolean; claude: boolean; github: boolean; anki: boolean }
   sessions: any[]
   logs: any[]
   agents: any[]
@@ -79,6 +88,7 @@ export interface DashboardData {
   isSessionsLoading: boolean
   isClaudeLoading: boolean
   isGithubLoading: boolean
+  isAnkiLoading: boolean
   // Hermes enrichment
   hermesCronJobCount: number
   // Subscription display

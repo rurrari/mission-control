@@ -144,6 +144,15 @@ export const WIDGET_CATALOG: DashboardWidget[] = [
     defaultSize: 'full',
     component: 'QuickActionsWidget',
   },
+  {
+    id: 'anki-recent',
+    label: 'Anki — Recent Words',
+    description: 'Most recently added Anki flashcards',
+    category: 'integrations',
+    modes: ['local'],
+    defaultSize: 'sm',
+    component: 'AnkiRecentWidget',
+  },
 ]
 
 export const LOCAL_DEFAULT_LAYOUT = [

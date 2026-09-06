@@ -1,0 +1,6 @@
+[Unit]
+Description=Refresh the world-readable Anki collection snapshot for the MC dashboard widget
+
+[Service]
+Type=oneshot
+ExecStart=/home/russ/projects/mission-control/scripts/anki-snapshot.sh
