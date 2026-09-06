@@ -29,3 +29,6 @@ chmod 644 "$TMP_FILE"
 mv -f "$TMP_FILE" "$SNAPSHOT_FILE"
 
 echo "anki-snapshot: refreshed $SNAPSHOT_FILE from $SOURCE"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+python3 "$SCRIPT_DIR/anki-report-latest.py" || echo "anki-snapshot: reporting to Mission Control failed (non-fatal)" >&2
