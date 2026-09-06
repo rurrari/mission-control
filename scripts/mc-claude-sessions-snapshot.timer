@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodic refresh of the Claude Code sessions snapshot for the MC dashboard
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+Unit=mc-claude-sessions-snapshot.service
+
+[Install]
+WantedBy=timers.target

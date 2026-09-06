@@ -40,6 +40,14 @@ services:
       # collection.anki2 back to 0600 on every save, which the container's uid
       # (1001) can't read regardless of this mount.
       - ${ANKI_SNAPSHOT_DIR:-/home/russ/.local/state/mc-anki-snapshot}:/anki-data:ro
+      # Read-only mount of a periodically-refreshed, world-readable snapshot of
+      # ~/.claude/projects (see scripts/claude-sessions-snapshot.sh), so MC's
+      # local-mode session monitoring can see real Claude Code sessions on this
+      # host. Deliberately NOT the whole ~/.claude dir (which also holds
+      # .credentials.json/OAuth tokens) -- only the projects/ subtree is ever
+      # copied into the snapshot, so MC_CLAUDE_HOME below can never resolve to
+      # live credentials no matter what code path tries.
+      - ${CLAUDE_SESSIONS_SNAPSHOT_DIR:-/home/russ/.local/state/mc-claude-sessions-snapshot}:/claude-host:ro
     # Allow the container to reach an OpenClaw gateway running on the Docker host.
     # Docker Desktop (macOS/Windows): host.docker.internal works out of the box.
     # Linux: this extra_hosts entry maps host.docker.internal to the host IP.

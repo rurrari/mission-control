@@ -1,0 +1,6 @@
+[Unit]
+Description=Refresh the world-readable Claude Code sessions snapshot for the MC dashboard
+
+[Service]
+Type=oneshot
+ExecStart=/home/russ/projects/mission-control/scripts/claude-sessions-snapshot.sh
