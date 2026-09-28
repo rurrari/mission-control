@@ -63,3 +63,21 @@ describe('MiniMax direct dispatch routing', () => {
     expect(pickProvider('minimax/MiniMax-M2.7')).toBe('minimax')
   })
 })
+
+describe('Ollama direct dispatch routing (Aegis review, D-03)', () => {
+  it('routes the ollama/ prefixed model to the local provider', () => {
+    expect(pickProvider('ollama/kimi-k2.5:cloud')).toBe('local')
+  })
+
+  it('routes the functionally identical local/ prefix to the local provider', () => {
+    expect(pickProvider('local/kimi-k2.5:cloud')).toBe('local')
+  })
+
+  // Regression guard (RESEARCH.md Pitfall 2): this intentionally asserts the WRONG
+  // routing. The bare model id is uncataloged and silently falls through to Anthropic —
+  // which is exactly why the `ollama/` prefix is load-bearing and must never be
+  // "cleaned up" out of AEGIS_REVIEW_DISPATCH_MODEL.
+  it('routes the bare uncataloged model id to anthropic, not local (Pitfall 2 guard)', () => {
+    expect(pickProvider('kimi-k2.5:cloud')).toBe('anthropic')
+  })
+})
