@@ -22,7 +22,7 @@ describe('scheduler workspace isolation', () => {
 
   it('excludes strict tasks before automated reviewer runtime access', () => {
     const dispatch = source('src/lib/task-dispatch.ts')
-    const start = dispatch.indexOf('export async function runAegisReviews()')
+    const start = dispatch.indexOf('export const AEGIS_REVIEWABLE_TASKS_SQL')
     const end = dispatch.indexOf('export async function requeueStaleTasks()')
     const review = dispatch.slice(start, end)
 

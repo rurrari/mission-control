@@ -1550,6 +1550,22 @@ const migrations: Migration[] = [
         db.exec(`ALTER TABLE agents ADD COLUMN claude_base_session_created_at TEXT DEFAULT NULL`)
       }
     }
+  },
+  {
+    // GATE-02 (D-05): per-project Aegis trust counter. `aegis_graduated_at` is a
+    // nullable timestamp rather than a boolean `is_graduated` flag deliberately --
+    // when GATE-03 (manual demotion, deferred to v2) lands, nulling this column
+    // and resetting the counter is sufficient, with no follow-up schema migration.
+    id: '056_project_aegis_trust',
+    up: (db) => {
+      const cols = db.prepare(`PRAGMA table_info(projects)`).all() as Array<{ name: string }>
+      if (!cols.some(c => c.name === 'consecutive_aegis_approvals')) {
+        db.exec(`ALTER TABLE projects ADD COLUMN consecutive_aegis_approvals INTEGER NOT NULL DEFAULT 0`)
+      }
+      if (!cols.some(c => c.name === 'aegis_graduated_at')) {
+        db.exec(`ALTER TABLE projects ADD COLUMN aegis_graduated_at INTEGER DEFAULT NULL`)
+      }
+    }
   }
 ]
 

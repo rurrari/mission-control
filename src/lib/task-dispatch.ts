@@ -1450,6 +1450,83 @@ function parseReviewVerdict(text: string): { status: 'approved' | 'rejected'; no
   return { status, notes }
 }
 
+export const AEGIS_REVIEWABLE_TASKS_SQL = `
+  SELECT t.id, t.title, t.description, t.status, t.priority, t.resolution, t.assigned_to, t.workspace_id,
+         t.project_id, p.ticket_prefix, t.project_ticket_no, a.config as agent_config
+  FROM tasks t
+  JOIN workspaces w ON w.id = t.workspace_id
+  LEFT JOIN projects p ON p.id = t.project_id AND p.workspace_id = t.workspace_id
+  LEFT JOIN agents a ON a.name = t.assigned_to AND a.workspace_id = t.workspace_id
+  WHERE t.status = 'review'
+    AND w.isolation = 'shared'
+    -- GATE-01 (D-01): structurally exclude always_human tasks from automated review.
+    -- COALESCE(...,'default') is load-bearing, not decorative: rows created before
+    -- this phase (and pre-existing mc-mirror.py rows) have no metadata.category at
+    -- all, and treating a missing value as always_human would freeze every one of
+    -- them in the review queue permanently (RESEARCH.md assumption A3). The
+    -- classifier itself fails closed to always_human on its own failure path --
+    -- this fail-open applies only to rows the classifier never touched.
+    AND COALESCE(json_extract(t.metadata, '$.category'), 'default') != 'always_human'
+  ORDER BY t.updated_at ASC
+  LIMIT 3
+`
+
+// D-03: Aegis review must be dispatched to Ollama, never to the Claude subscription.
+// The `ollama/` prefix is load-bearing, not cosmetic -- kimi-k2.5:cloud is absent
+// from MODEL_CATALOG, so classifyModelProvider() returns undefined and pickProvider()'s
+// prefix-match fallback is the only remaining route to 'local'. A bare kimi-k2.5:cloud
+// silently resolves to 'anthropic' and would burn Claude subscription quota. Do not
+// "clean up" this prefix -- see the regression guard in task-dispatch.test.ts.
+export const AEGIS_REVIEW_DISPATCH_MODEL = 'ollama/kimi-k2.5:cloud'
+
+// D-05: consecutive Aegis approvals required before a project graduates to
+// fully-automated verdict application.
+export const AEGIS_GRADUATION_THRESHOLD = 5
+
+/**
+ * Records one Aegis verdict against a project's trust counter.
+ *
+ * `graduated` is the graduation state as of BEFORE this verdict is applied, so the
+ * run that crosses the threshold is still human-applied and only the NEXT run is
+ * auto-applied (ROADMAP Phase 3 criterion 3: "automatically approved going forward").
+ * Graduation is one-way in v1: a rejection resets the counter but never clears
+ * aegis_graduated_at (GATE-03 demotion is deferred to v2).
+ */
+export function recordAegisVerdictForProject(
+  db: Database.Database,
+  projectId: number | null,
+  verdictStatus: 'approved' | 'rejected',
+): { graduated: boolean; consecutiveApprovals: number } {
+  if (projectId == null) {
+    return { graduated: false, consecutiveApprovals: 0 }
+  }
+
+  const row = db.prepare(
+    'SELECT consecutive_aegis_approvals, aegis_graduated_at FROM projects WHERE id = ?'
+  ).get(projectId) as { consecutive_aegis_approvals: number; aegis_graduated_at: number | null } | undefined
+
+  if (!row) {
+    return { graduated: false, consecutiveApprovals: 0 }
+  }
+
+  const wasGraduated = row.aegis_graduated_at != null
+
+  if (verdictStatus === 'approved') {
+    db.prepare('UPDATE projects SET consecutive_aegis_approvals = consecutive_aegis_approvals + 1 WHERE id = ?')
+      .run(projectId)
+    const updated = db.prepare('SELECT consecutive_aegis_approvals FROM projects WHERE id = ?')
+      .get(projectId) as { consecutive_aegis_approvals: number }
+    if (!wasGraduated && updated.consecutive_aegis_approvals >= AEGIS_GRADUATION_THRESHOLD) {
+      db.prepare('UPDATE projects SET aegis_graduated_at = ? WHERE id = ?')
+        .run(Math.floor(Date.now() / 1000), projectId)
+    }
+    return { graduated: wasGraduated, consecutiveApprovals: updated.consecutive_aegis_approvals }
+  } else {
+    db.prepare('UPDATE projects SET consecutive_aegis_approvals = 0 WHERE id = ?').run(projectId)
+    return { graduated: wasGraduated, consecutiveApprovals: 0 }
+  }
+}
+
 /**
  * Run Aegis quality reviews on tasks in 'review' status.
  * Uses an agent to evaluate the task resolution, then approves or rejects.
@@ -1457,18 +1534,7 @@ function parseReviewVerdict(text: string): { status: 'approved' | 'rejected'; no
 export async function runAegisReviews(): Promise<{ ok: boolean; message: string }> {
   const db = getDatabase()
 
-  const tasks = db.prepare(`
-    SELECT t.id, t.title, t.description, t.status, t.priority, t.resolution, t.assigned_to, t.workspace_id,
-           t.project_id, p.ticket_prefix, t.project_ticket_no, a.config as agent_config
-    FROM tasks t
-    JOIN workspaces w ON w.id = t.workspace_id
-    LEFT JOIN projects p ON p.id = t.project_id AND p.workspace_id = t.workspace_id
-    LEFT JOIN agents a ON a.name = t.assigned_to AND a.workspace_id = t.workspace_id
-    WHERE t.status = 'review'
-      AND w.isolation = 'shared'
-    ORDER BY t.updated_at ASC
-    LIMIT 3
-  `).all() as ReviewableTask[]
+  const tasks = db.prepare(AEGIS_REVIEWABLE_TASKS_SQL).all() as ReviewableTask[]
 
   if (tasks.length === 0) {
     return { ok: true, message: 'No tasks awaiting review' }
@@ -1500,7 +1566,7 @@ export async function runAegisReviews(): Promise<{ ok: boolean; message: string 
           id: task.id, title: task.title, description: task.description,
           status: 'quality_review', priority: 'high', assigned_to: 'aegis',
           workspace_id: task.workspace_id, agent_name: 'aegis', agent_id: 0,
-          agent_config: task.agent_config, ticket_prefix: task.ticket_prefix,
+          agent_config: JSON.stringify({ dispatchModel: AEGIS_REVIEW_DISPATCH_MODEL }), ticket_prefix: task.ticket_prefix,
           project_ticket_no: task.project_ticket_no, project_id: null,
         }
         agentResponse = await callDirectly(reviewTask, prompt)
@@ -1531,12 +1597,34 @@ export async function runAegisReviews(): Promise<{ ok: boolean; message: string 
 
       const verdict = parseReviewVerdict(agentResponse.text)
 
-      // Insert quality review record
+      // GATE-02: read the project's current trust status before recording this
+      // verdict, purely to annotate the audit note below -- the authoritative
+      // read/write happens in recordAegisVerdictForProject() after the INSERT.
+      const preVerdictProject = task.project_id != null
+        ? db.prepare('SELECT consecutive_aegis_approvals, aegis_graduated_at FROM projects WHERE id = ?')
+            .get(task.project_id) as { consecutive_aegis_approvals: number; aegis_graduated_at: number | null } | undefined
+        : undefined
+      const preVerdictGraduated = preVerdictProject?.aegis_graduated_at != null
+      const preVerdictCount = preVerdictProject?.consecutive_aegis_approvals ?? 0
+      const notes = preVerdictGraduated
+        ? verdict.notes
+        : `${verdict.notes} [awaiting human confirmation -- project trust ${preVerdictCount}/${AEGIS_GRADUATION_THRESHOLD}]`
+
+      // Insert quality review record -- unconditional: the audit trail must exist
+      // regardless of whether the verdict below is applied.
       db.prepare(`
         INSERT INTO quality_reviews (task_id, reviewer, status, notes, workspace_id)
         VALUES (?, 'aegis', ?, ?, ?)
-      `).run(task.id, verdict.status, verdict.notes, task.workspace_id)
+      `).run(task.id, verdict.status, notes, task.workspace_id)
 
+      // GATE-02 (D-04/D-05/D-06): verdicts are recorded always (above) but only
+      // applied once the project has earned automated trust. After graduation,
+      // Aegis still runs on every task and still costs an Ollama call -- that is
+      // deliberate per D-06, so drift shows up immediately as a rejected task
+      // rather than being masked by skipping review entirely.
+      const { graduated, consecutiveApprovals } = recordAegisVerdictForProject(db, task.project_id, verdict.status)
+
+      if (graduated) {
       if (verdict.status === 'approved') {
         db.prepare('UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND workspace_id = ?')
           .run('done', Math.floor(Date.now() / 1000), task.id, task.workspace_id)
@@ -1590,6 +1678,17 @@ export async function runAegisReviews(): Promise<{ ok: boolean; message: string 
           INSERT INTO comments (task_id, author, content, created_at, workspace_id)
           VALUES (?, 'aegis', ?, ?, ?)
         `).run(task.id, `Quality Review Rejected (attempt ${newAttempts}/${maxAegisRetries}):\n${verdict.notes}`, now, task.workspace_id)
+      }
+      } else {
+        // Not graduated yet: verdict recorded above, but tasks.status stays at
+        // 'quality_review' (already set earlier in this function) -- that is
+        // exactly the state the existing dashboard review form and
+        // POST /api/quality-review already act on (GATE-02's manual queue).
+        // No new status value, endpoint, or UI is needed.
+        logger.info(
+          { taskId: task.id, verdict: verdict.status, consecutiveApprovals, threshold: AEGIS_GRADUATION_THRESHOLD },
+          'Aegis verdict recorded but not applied -- project has not graduated'
+        )
       }
 
       db_helpers.logActivity(

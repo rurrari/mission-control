@@ -294,7 +294,7 @@ describe('direct session API coverage', () => {
     const scheduler = readFileSync(join(process.cwd(), 'src/lib/scheduler.ts'), 'utf8')
 
     expect(dispatch).toContain("WHERE workspace_id = ?\n        AND hidden = 0")
-    expect(dispatch).toContain("WHERE t.status = 'review'\n      AND w.isolation = 'shared'")
+    expect(dispatch).toContain("WHERE t.status = 'review'\n    AND w.isolation = 'shared'")
     expect(scheduler).toContain('SELECT id, name, status, last_seen, workspace_id FROM agents')
     expect(scheduler).toContain("VALUES ('agent_status_change', 'agent', ?, 'heartbeat', ?, ?)")
     expect(scheduler).toContain("VALUES ('system', 'heartbeat', ?, ?, 'agent', ?, ?)")
