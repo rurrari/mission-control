@@ -1380,7 +1380,16 @@ async function callDirectly(task: DispatchableTask, prompt: string): Promise<Age
   const provider = pickProvider(resolveTaskDispatchModelOverride(task) ?? model)
   if (provider === 'minimax') return callMiniMaxDirectly(task, prompt, model)
   if (provider === 'openai') return callOpenAIDirectly(task, prompt, model)
-  if (provider === 'local') return callLocalDirectly(task, prompt, model)
+  if (provider === 'local') {
+    // classifyDirectModel() strips everything up to the LAST slash, which is
+    // correct for a bare wire-format id (Anthropic/CLI) but wrong for a
+    // "local" backend whose model id is itself multi-segment (e.g. OpenRouter's
+    // "deepseek/deepseek-v4.1-flash" -- vendor/model, not a gateway prefix to
+    // discard). Use the raw override and let callLocalDirectly()'s own
+    // stripProviderPrefix() remove only our own bucket prefix ("local/"),
+    // preserving the rest of the id intact.
+    return callLocalDirectly(task, prompt, resolveTaskDispatchModelOverride(task) ?? model)
+  }
   // Anthropic: prefer the host Claude Code CLI when available — it uses the
   // operator's existing login, no API key needed. Fall back to the API key
   // path only if the CLI isn't installed.
@@ -1480,13 +1489,20 @@ export const AEGIS_REVIEWABLE_TASKS_SQL = `
   LIMIT 3
 `
 
-// D-03: Aegis review must be dispatched to Ollama, never to the Claude subscription.
-// The `ollama/` prefix is load-bearing, not cosmetic -- kimi-k2.5:cloud is absent
-// from MODEL_CATALOG, so classifyModelProvider() returns undefined and pickProvider()'s
-// prefix-match fallback is the only remaining route to 'local'. A bare kimi-k2.5:cloud
-// silently resolves to 'anthropic' and would burn Claude subscription quota. Do not
-// "clean up" this prefix -- see the regression guard in task-dispatch.test.ts.
-export const AEGIS_REVIEW_DISPATCH_MODEL = 'ollama/kimi-k2.5:cloud'
+// D-03: Aegis review must be dispatched to a model outside the Claude subscription.
+// Originally pinned to Ollama Cloud's free-tier `ollama/kimi-k2.5:cloud`, but all
+// three Ollama Cloud free-tier models configured on this Pi (kimi-k2.5, minimax-m2.5,
+// ministral-3:14b) were retired by the provider without warning (discovered live
+// during the 03-05 deploy drill, 2026-09-29). Switched to OpenRouter's
+// deepseek/deepseek-v4.1-flash via the same generic 'local' direct-dispatch path
+// (LOCAL_LLM_ENDPOINT now points at https://openrouter.ai/api/v1) -- effectively
+// free (~$0.00002 per review call against an existing funded OpenRouter account),
+// with `tools`+`thinking` capability matching the original D-03 requirement.
+// The `local/` prefix is load-bearing, not cosmetic -- it's what routes pickProvider()
+// to 'local' (see the regression guard in task-dispatch.test.ts); the rest of the
+// string ("deepseek/deepseek-v4.1-flash") is OpenRouter's own vendor/model id and
+// must be preserved intact by callDirectly()'s 'local' branch, not bare-stripped.
+export const AEGIS_REVIEW_DISPATCH_MODEL = 'local/deepseek/deepseek-v4.1-flash'
 
 // D-05: consecutive Aegis approvals required before a project graduates to
 // fully-automated verdict application.

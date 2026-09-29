@@ -127,8 +127,8 @@ describe('AEGIS_REVIEWABLE_TASKS_SQL (GATE-01)', () => {
 })
 
 describe('Aegis review dispatch model (D-03)', () => {
-  it('is pinned to ollama/kimi-k2.5:cloud', () => {
-    expect(AEGIS_REVIEW_DISPATCH_MODEL).toBe('ollama/kimi-k2.5:cloud')
+  it('is pinned to local/deepseek/deepseek-v4.1-flash (OpenRouter, after Ollama Cloud free-tier retirement)', () => {
+    expect(AEGIS_REVIEW_DISPATCH_MODEL).toBe('local/deepseek/deepseek-v4.1-flash')
   })
 
   it('routes through the local direct-dispatch provider', () => {
