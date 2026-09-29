@@ -1368,7 +1368,16 @@ async function callLocalDirectly(task: DispatchableTask, prompt: string, model: 
 
 async function callDirectly(task: DispatchableTask, prompt: string): Promise<AgentResponseParsed> {
   const model = classifyDirectModel(task)
-  const provider = pickProvider(model)
+  // Provider selection must see the raw dispatchModel override with its provider
+  // prefix intact (e.g. "ollama/kimi-k2.5:cloud") -- classifyDirectModel() strips
+  // that prefix down to a bare wire-format model id for the API call itself
+  // (needed for gateway-style compound overrides like "9router/cc/<model>"),
+  // which would otherwise make pickProvider() see the already-stripped bare id
+  // and silently misroute to Anthropic (RESEARCH.md Pitfall 2, D-03). This
+  // matches the routing convention documented above pickProvider()'s own
+  // definition: routing is by prefix on the agent's dispatchModel, not on a
+  // pre-stripped model id.
+  const provider = pickProvider(resolveTaskDispatchModelOverride(task) ?? model)
   if (provider === 'minimax') return callMiniMaxDirectly(task, prompt, model)
   if (provider === 'openai') return callOpenAIDirectly(task, prompt, model)
   if (provider === 'local') return callLocalDirectly(task, prompt, model)
