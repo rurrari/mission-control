@@ -1168,7 +1168,23 @@ async function callOpenAICompatible(
   if (soul) messages.push({ role: 'system', content: soul })
   messages.push({ role: 'user', content: prompt })
 
-  const body = { model, messages, max_tokens: 4096 }
+  // Optional per-task reasoning override (OpenRouter's standardized `reasoning`
+  // request parameter -- see https://openrouter.ai/docs/use-cases/reasoning-tokens).
+  // Read from agent_config so it only applies to callers that explicitly opt in
+  // (e.g. Aegis review, which doesn't need chain-of-thought for a pass/fail verdict
+  // and was burning 600-4000+ output tokens on hidden reasoning for a ~100-token
+  // NOTES answer). Absent for every other caller, so minimax/openai/Ollama-backed
+  // 'local' dispatch keep their current default behavior unchanged.
+  let reasoning: unknown
+  if (task.agent_config) {
+    try {
+      const cfg = JSON.parse(task.agent_config)
+      if (cfg.reasoning !== undefined) reasoning = cfg.reasoning
+    } catch { /* ignore */ }
+  }
+
+  const body: Record<string, unknown> = { model, messages, max_tokens: 4096 }
+  if (reasoning !== undefined) body.reasoning = reasoning
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`
 
@@ -1495,14 +1511,21 @@ export const AEGIS_REVIEWABLE_TASKS_SQL = `
 // ministral-3:14b) were retired by the provider without warning (discovered live
 // during the 03-05 deploy drill, 2026-09-29). Switched to OpenRouter's
 // deepseek/deepseek-v4.1-flash via the same generic 'local' direct-dispatch path
-// (LOCAL_LLM_ENDPOINT now points at https://openrouter.ai/api/v1) -- effectively
-// free (~$0.00002 per review call against an existing funded OpenRouter account),
+// (LOCAL_LLM_ENDPOINT now points at https://openrouter.ai/api/v1) -- roughly
+// $0.003-0.005 per review call against an existing funded OpenRouter account,
 // with `tools`+`thinking` capability matching the original D-03 requirement.
 // The `local/` prefix is load-bearing, not cosmetic -- it's what routes pickProvider()
 // to 'local' (see the regression guard in task-dispatch.test.ts); the rest of the
 // string ("deepseek/deepseek-v4.1-flash") is OpenRouter's own vendor/model id and
 // must be preserved intact by callDirectly()'s 'local' branch, not bare-stripped.
-export const AEGIS_REVIEW_DISPATCH_MODEL = 'local/deepseek/deepseek-v4.1-flash'
+//
+// Env-overridable (2026-09-29 follow-up) so a future model swap -- e.g. if this one
+// is retired too, same as the Ollama Cloud models before it -- is a `.env` edit +
+// `docker compose up -d`, not a full image rebuild. Falls back to the value above if
+// AEGIS_REVIEW_DISPATCH_MODEL is unset, so existing tests and deployments without the
+// env var keep working unchanged.
+export const AEGIS_REVIEW_DISPATCH_MODEL =
+  (process.env.AEGIS_REVIEW_DISPATCH_MODEL || 'local/deepseek/deepseek-v4.1-flash').trim()
 
 // D-05: consecutive Aegis approvals required before a project graduates to
 // fully-automated verdict application.
@@ -1586,12 +1609,17 @@ export async function runAegisReviews(): Promise<{ ok: boolean; message: string 
       if (!isGatewayAvailable() && isDirectDispatchAvailable()) {
         // Direct API review through the configured provider, with no gateway required.
         // Pass through agent_config so Aegis honors per-agent dispatchModel
-        // overrides and routes to the matching provider.
+        // overrides and routes to the matching provider. reasoning:{enabled:false}
+        // is set because Aegis's verdict is a short pass/fail judgment, not a task
+        // that benefits from visible chain-of-thought -- live-measured 2026-09-29:
+        // without this, real reviews burned 600-4000+ output tokens on hidden
+        // reasoning for a ~100-token NOTES answer (~$0.003-0.005/review); with it,
+        // ~20-80 output tokens (~$0.00002/review), same VERDICT/NOTES quality.
         const reviewTask: DispatchableTask = {
           id: task.id, title: task.title, description: task.description,
           status: 'quality_review', priority: 'high', assigned_to: 'aegis',
           workspace_id: task.workspace_id, agent_name: 'aegis', agent_id: 0,
-          agent_config: JSON.stringify({ dispatchModel: AEGIS_REVIEW_DISPATCH_MODEL }), ticket_prefix: task.ticket_prefix,
+          agent_config: JSON.stringify({ dispatchModel: AEGIS_REVIEW_DISPATCH_MODEL, reasoning: { enabled: false } }), ticket_prefix: task.ticket_prefix,
           project_ticket_no: task.project_ticket_no, project_id: null,
         }
         agentResponse = await callDirectly(reviewTask, prompt)

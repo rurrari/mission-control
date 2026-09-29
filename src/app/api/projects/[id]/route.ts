@@ -53,6 +53,7 @@ export async function GET(
     const row = db.prepare(`
       SELECT p.id, p.workspace_id, p.name, p.slug, p.description, p.ticket_prefix, p.ticket_counter, p.status,
              p.github_repo, p.deadline, p.color, p.github_sync_enabled, p.github_labels_initialized, p.github_default_branch, p.created_at, p.updated_at,
+             p.consecutive_aegis_approvals, p.aegis_graduated_at,
              (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id) as task_count,
              (SELECT GROUP_CONCAT(paa.agent_name) FROM project_agent_assignments paa WHERE paa.project_id = p.id) as assigned_agents_csv
       FROM projects p
@@ -222,6 +223,7 @@ export async function PATCH(
     const projectRow = db.prepare(`
       SELECT id, workspace_id, name, slug, description, ticket_prefix, ticket_counter, status,
              github_repo, deadline, color, github_sync_enabled, github_labels_initialized, github_default_branch, created_at, updated_at,
+             consecutive_aegis_approvals, aegis_graduated_at,
              (SELECT GROUP_CONCAT(paa.agent_name) FROM project_agent_assignments paa WHERE paa.project_id = projects.id) as assigned_agents_csv
       FROM projects
       WHERE id = ? AND workspace_id = ?
